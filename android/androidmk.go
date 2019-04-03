@@ -32,6 +32,8 @@ func init() {
 	RegisterSingletonType("androidmk", AndroidMkSingleton)
 }
 
+// Deprecated: consider using AndroidMkEntriesProvider instead, especially if you're not going to
+// use the Custom function.
 type AndroidMkDataProvider interface {
 	AndroidMk() AndroidMkData
 	BaseModuleName() string
@@ -74,6 +76,8 @@ type AndroidMkEntries struct {
 	footer bytes.Buffer
 
 	ExtraEntries []AndroidMkExtraEntriesFunc
+
+	AddCustomEntries func(name, prefix, moduleDir string, entries *AndroidMkEntries)
 
 	EntryMap   map[string][]string
 	entryOrder []string
@@ -230,6 +234,9 @@ func (a *AndroidMkEntries) fillInEntries(config Config, bpPath string, mod bluep
 	}
 	for _, extra := range a.ExtraEntries {
 		extra(a)
+	blueprintDir := filepath.Dir(bpPath)
+	if a.AddCustomEntries != nil {
+		a.AddCustomEntries(name, prefix, blueprintDir, a)
 	}
 
 	// Write to footer.
@@ -346,6 +353,8 @@ func translateAndroidMkModule(ctx SingletonContext, w io.Writer, mod blueprint.M
 		return translateAndroidModule(ctx, w, mod, x)
 	case bootstrap.GoBinaryTool:
 		return translateGoBinaryModule(ctx, w, mod, x)
+	case AndroidMkEntriesProvider:
+		return translateAndroidMkEntriesModule(ctx, w, mod, x)
 	default:
 		return nil
 	}
@@ -365,35 +374,30 @@ func translateGoBinaryModule(ctx SingletonContext, w io.Writer, mod blueprint.Mo
 func translateAndroidModule(ctx SingletonContext, w io.Writer, mod blueprint.Module,
 	provider AndroidMkDataProvider) error {
 
-	name := provider.BaseModuleName()
 	amod := mod.(Module).base()
-
-	if !amod.Enabled() {
-		return nil
-	}
-
-	if amod.commonProperties.SkipInstall {
-		return nil
-	}
-
-	if !amod.commonProperties.NamespaceExportedToMake {
-		// TODO(jeffrygaston) do we want to validate that there are no modules being
-		// exported to Kati that depend on this module?
+	if shouldSkipAndroidMkProcessing(amod) {
 		return nil
 	}
 
 	data := provider.AndroidMk()
-
 	if data.Include == "" {
 		data.Include = "$(BUILD_PREBUILT)"
 	}
 
-	data.Required = append(data.Required, amod.commonProperties.Required...)
-
-	// Make does not understand LinuxBionic
-	if amod.Os() == LinuxBionic {
-		return nil
+	// Get the preamble content through AndroidMkEntries logic.
+	entries := AndroidMkEntries{
+		Class:           data.Class,
+		SubName:         data.SubName,
+		DistFile:        data.DistFile,
+		OutputFile:      data.OutputFile,
+		Disabled:        data.Disabled,
+		Include:         data.Include,
+		Required:        data.Required,
 	}
+	entries.fillInEntries(ctx.Config(), ctx.BlueprintFile(mod), mod)
+	// preamble doesn't need the footer content.
+	entries.footer = bytes.Buffer{}
+	entries.write(&data.preamble)
 
 	prefix := ""
 	if amod.ArchSpecific() {
@@ -412,115 +416,7 @@ func translateAndroidModule(ctx SingletonContext, w io.Writer, mod blueprint.Mod
 		}
 	}
 
-	if len(amod.commonProperties.Dist.Targets) > 0 {
-		distFile := data.DistFile
-		if !distFile.Valid() {
-			distFile = data.OutputFile
-		}
-		if distFile.Valid() {
-			dest := filepath.Base(distFile.String())
-
-			if amod.commonProperties.Dist.Dest != nil {
-				var err error
-				dest, err = validateSafePath(*amod.commonProperties.Dist.Dest)
-				if err != nil {
-					// This was checked in ModuleBase.GenerateBuildActions
-					panic(err)
-				}
-			}
-
-			if amod.commonProperties.Dist.Suffix != nil {
-				ext := filepath.Ext(dest)
-				suffix := *amod.commonProperties.Dist.Suffix
-				dest = strings.TrimSuffix(dest, ext) + suffix + ext
-			}
-
-			if amod.commonProperties.Dist.Dir != nil {
-				var err error
-				dest, err = validateSafePath(*amod.commonProperties.Dist.Dir, dest)
-				if err != nil {
-					// This was checked in ModuleBase.GenerateBuildActions
-					panic(err)
-				}
-			}
-
-			goals := strings.Join(amod.commonProperties.Dist.Targets, " ")
-			fmt.Fprintln(&data.preamble, ".PHONY:", goals)
-			fmt.Fprintf(&data.preamble, "$(call dist-for-goals,%s,%s:%s)\n",
-				goals, distFile.String(), dest)
-		}
-	}
-
-	fmt.Fprintln(&data.preamble, "\ninclude $(CLEAR_VARS)")
-	fmt.Fprintln(&data.preamble, "LOCAL_PATH :=", filepath.Dir(ctx.BlueprintFile(mod)))
-	fmt.Fprintln(&data.preamble, "LOCAL_MODULE :=", name+data.SubName)
-	fmt.Fprintln(&data.preamble, "LOCAL_MODULE_CLASS :=", data.Class)
-	fmt.Fprintln(&data.preamble, "LOCAL_PREBUILT_MODULE_FILE :=", data.OutputFile.String())
-
-	if len(data.Required) > 0 {
-		fmt.Fprintln(&data.preamble, "LOCAL_REQUIRED_MODULES := "+strings.Join(data.Required, " "))
-	}
-
-	archStr := amod.Arch().ArchType.String()
-	host := false
-	switch amod.Os().Class {
-	case Host:
-		// Make cannot identify LOCAL_MODULE_HOST_ARCH:= common.
-		if archStr != "common" {
-			fmt.Fprintln(&data.preamble, "LOCAL_MODULE_HOST_ARCH :=", archStr)
-		}
-		host = true
-	case HostCross:
-		// Make cannot identify LOCAL_MODULE_HOST_CROSS_ARCH:= common.
-		if archStr != "common" {
-			fmt.Fprintln(&data.preamble, "LOCAL_MODULE_HOST_CROSS_ARCH :=", archStr)
-		}
-		host = true
-	case Device:
-		// Make cannot identify LOCAL_MODULE_TARGET_ARCH:= common.
-		if archStr != "common" {
-			fmt.Fprintln(&data.preamble, "LOCAL_MODULE_TARGET_ARCH :=", archStr)
-		}
-
-		if len(amod.commonProperties.Init_rc) > 0 {
-			fmt.Fprintln(&data.preamble, "LOCAL_INIT_RC := ", strings.Join(amod.commonProperties.Init_rc, " "))
-		}
-		if len(amod.commonProperties.Vintf_fragments) > 0 {
-			fmt.Fprintln(&data.preamble, "LOCAL_VINTF_FRAGMENTS := ", strings.Join(amod.commonProperties.Vintf_fragments, " "))
-		}
-		if Bool(amod.commonProperties.Proprietary) {
-			fmt.Fprintln(&data.preamble, "LOCAL_PROPRIETARY_MODULE := true")
-		}
-		if Bool(amod.commonProperties.Vendor) || Bool(amod.commonProperties.Soc_specific) {
-			fmt.Fprintln(&data.preamble, "LOCAL_VENDOR_MODULE := true")
-		}
-		if Bool(amod.commonProperties.Device_specific) {
-			fmt.Fprintln(&data.preamble, "LOCAL_ODM_MODULE := true")
-		}
-		if Bool(amod.commonProperties.Product_specific) {
-			fmt.Fprintln(&data.preamble, "LOCAL_PRODUCT_MODULE := true")
-		}
-		if Bool(amod.commonProperties.Product_services_specific) {
-			fmt.Fprintln(&data.preamble, "LOCAL_PRODUCT_SERVICES_MODULE := true")
-		}
-		if amod.commonProperties.Owner != nil {
-			fmt.Fprintln(&data.preamble, "LOCAL_MODULE_OWNER :=", *amod.commonProperties.Owner)
-		}
-	}
-
-	if amod.noticeFile.Valid() {
-		fmt.Fprintln(&data.preamble, "LOCAL_NOTICE_FILE :=", amod.noticeFile.String())
-	}
-
-	if host {
-		makeOs := amod.Os().String()
-		if amod.Os() == Linux || amod.Os() == LinuxBionic {
-			makeOs = "linux"
-		}
-		fmt.Fprintln(&data.preamble, "LOCAL_MODULE_HOST_OS :=", makeOs)
-		fmt.Fprintln(&data.preamble, "LOCAL_IS_HOST_MODULE := true")
-	}
-
+	name := provider.BaseModuleName()
 	blueprintDir := filepath.Dir(ctx.BlueprintFile(mod))
 
 	if data.Custom != nil {
@@ -548,4 +444,31 @@ func WriteAndroidMkData(w io.Writer, data AndroidMkData) {
 	}
 
 	fmt.Fprintln(w, "include "+data.Include)
+}
+
+func translateAndroidMkEntriesModule(ctx SingletonContext, w io.Writer, mod blueprint.Module,
+	provider AndroidMkEntriesProvider) error {
+	if shouldSkipAndroidMkProcessing(mod.(Module).base()) {
+		return nil
+	}
+
+	entries := provider.AndroidMkEntries()
+	entries.fillInEntries(ctx.Config(), ctx.BlueprintFile(mod), mod)
+
+	entries.write(w)
+
+	return nil
+}
+
+func shouldSkipAndroidMkProcessing(module *ModuleBase) bool {
+	if !module.commonProperties.NamespaceExportedToMake {
+		// TODO(jeffrygaston) do we want to validate that there are no modules being
+		// exported to Kati that depend on this module?
+		return true
+	}
+
+	return !module.Enabled() ||
+		module.commonProperties.SkipInstall ||
+		// Make does not understand LinuxBionic
+		module.Os() == LinuxBionic
 }
