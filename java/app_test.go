@@ -22,7 +22,6 @@ import (
 	"regexp"
 */
 	"regexp"
->>>>>>> 2813aea3... Implement DPI variants in android_app_import.
 	"sort"
 	"strings"
 	"testing"
