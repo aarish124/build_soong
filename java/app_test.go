@@ -15,15 +15,14 @@
 package java
 
 import (
-	"android/soong/android"
-	"android/soong/cc"
-
 	"fmt"
 	"path/filepath"
 	"reflect"
 /*
 	"regexp"
 */
+	"regexp"
+>>>>>>> 2813aea3... Implement DPI variants in android_app_import.
 	"sort"
 	"strings"
 	"testing"
@@ -1286,7 +1285,9 @@ func TestAndroidAppImport_DpiVariants(t *testing.T) {
 					apk: "prebuilts/apk/app_xxhdpi.apk",
 				},
 			},
+
 			presigned: true,
+			certificate: "PRESIGNED",
 			dex_preopt: {
 				enabled: true,
 			},
@@ -1308,6 +1309,7 @@ func TestAndroidAppImport_DpiVariants(t *testing.T) {
 			name:                "AAPTPreferredConfig matches",
 			aaptPreferredConfig: proptools.StringPtr("xhdpi"),
 			aaptPrebuiltDPI:     []string{"xxhdpi", "ldpi"},
+			aaptPrebuiltDPI:     []string{"xxhdpi", "lhdpi"},
 			expected:            "prebuilts/apk/app_xhdpi.apk",
 		},
 		{
@@ -1469,3 +1471,4 @@ func TestAndroidAppImport_ArchVariants(t *testing.T) {
 	}
 }
 */
+
