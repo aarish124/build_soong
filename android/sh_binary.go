@@ -16,7 +16,6 @@ package android
 
 import (
 	"fmt"
-	"io"
 	"strings"
 )
 
@@ -59,6 +58,10 @@ type TestProperties struct {
 	// the name of the test configuration (for example "AndroidTest.xml") that should be
 	// installed with the module.
 	Test_config *string `android:"arch_variant"`
+
+	// list of files or filegroup modules that provide data that should be installed alongside
+	// the test.
+	Data []string `android:"path,arch_variant"`
 }
 
 type ShBinary struct {
@@ -74,6 +77,8 @@ type ShTest struct {
 	ShBinary
 
 	testProperties TestProperties
+
+	data Paths
 }
 
 func (s *ShBinary) DepsMutator(ctx BottomUpMutatorContext) {
@@ -123,8 +128,8 @@ func (s *ShBinary) GenerateAndroidBuildActions(ctx ModuleContext) {
 	})
 }
 
-func (s *ShBinary) AndroidMk() AndroidMkData {
-	return AndroidMkData{
+func (s *ShBinary) AndroidMkEntries() AndroidMkEntries {
+	return AndroidMkEntries{
 		Class:      "EXECUTABLES",
 		OutputFile: OptionalPathForPath(s.outputFilePath),
 		Include:    "$(BUILD_SYSTEM)/soong_cc_prebuilt.mk",
@@ -137,10 +142,11 @@ func (s *ShBinary) AndroidMk() AndroidMkData {
 			func(entries *AndroidMkEntries) {
 				s.customAndroidMkEntries(entries)
 			},
+		AddCustomEntries: func(name, prefix, moduleDir string, entries *AndroidMkEntries) {
+			s.customAndroidMkEntries(entries)
 		},
 	}
 }
-
 func (s *ShTest) AndroidMk() AndroidMkData {
 	data := s.ShBinary.AndroidMk()
 	data.Class = "NATIVE_TESTS"
@@ -184,6 +190,20 @@ func (s *ShTest) AndroidMkEntries() AndroidMkEntries {
 					entries.AddStrings("LOCAL_TEST_DATA", path+":"+rel)
 				}
 			},
+		AddCustomEntries: func(name, prefix, moduleDir string, entries *AndroidMkEntries) {
+			s.customAndroidMkEntries(entries)
+
+			entries.AddStrings("LOCAL_COMPATIBILITY_SUITE", s.testProperties.Test_suites...)
+			entries.SetString("LOCAL_TEST_CONFIG", String(s.testProperties.Test_config))
+			for _, d := range s.data {
+				rel := d.Rel()
+				path := d.String()
+				if !strings.HasSuffix(path, rel) {
+					panic(fmt.Errorf("path %q does not end with %q", path, rel))
+				}
+				path = strings.TrimSuffix(path, rel)
+				entries.AddStrings("LOCAL_TEST_DATA", path+":"+rel)
+			}
 		},
 	}
 }

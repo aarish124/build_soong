@@ -57,7 +57,6 @@ func TestShTestTestData(t *testing.T) {
 		t.Errorf("Unexpected test data expected: %q, actual: %q", expected, actual)
 	}
 }
-
 func TestShTestHost(t *testing.T) {
 	ctx, _ := testShBinary(t, `
 		sh_test_host {
@@ -77,3 +76,4 @@ func TestShTestHost(t *testing.T) {
 		t.Errorf("host bit is not set for a sh_test_host module.")
 	}
 }
+
