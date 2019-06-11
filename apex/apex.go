@@ -1463,7 +1463,7 @@ func (p *Prebuilt) AndroidMkEntries() android.AndroidMkEntries {
 func PrebuiltFactory() android.Module {
 	module := &Prebuilt{}
 	module.AddProperties(&module.properties)
-	android.InitSingleSourcePrebuiltModule(module, &module.properties.Source)
+	android.InitSingleSourcePrebuiltModule(module, &module.properties, "Source")
 	android.InitAndroidMultiTargetsArchModule(module, android.DeviceSupported, android.MultilibCommon)
 	return module
 }
