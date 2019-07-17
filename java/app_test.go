@@ -1351,7 +1351,6 @@ func TestAndroidAppImport_DpiVariants(t *testing.T) {
 	}
 }
 */
-
 func TestAndroidAppImport_Filename(t *testing.T) {
 	config := testConfig(nil)
 	ctx := testJava(t, `
