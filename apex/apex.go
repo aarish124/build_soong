@@ -1332,6 +1332,13 @@ type PrebuiltProperties struct {
 	// Optional name for the installed apex. If unspecified, name of the
 	// module is used as the file name
 	Filename *string
+
+	// Names of modules to be overridden. Listed modules can only be other binaries
+	// (in Make or Soong).
+	// This does not completely prevent installation of the overridden binaries, but if both
+	// binaries would be installed by default (in PRODUCT_PACKAGES) the other binary will be removed
+	// from PRODUCT_PACKAGES.
+	Overrides []string
 }
 
 func (p *Prebuilt) installable() bool {
@@ -1426,8 +1433,8 @@ func (p *Prebuilt) Name() string {
 	return p.prebuilt.Name(p.ModuleBase.Name())
 }
 
-func (p *Prebuilt) AndroidMk() android.AndroidMkData {
-	return android.AndroidMkData{
+func (p *Prebuilt) AndroidMkEntries() android.AndroidMkEntries {
+	return android.AndroidMkEntries{
 		Class:      "ETC",
 		OutputFile: android.OptionalPathForPath(p.inputApex),
 		Include:    "$(BUILD_PREBUILT)",
@@ -1443,6 +1450,11 @@ func (p *Prebuilt) AndroidMk() android.AndroidMkData {
 				entries.SetBoolIfTrue("LOCAL_UNINSTALLABLE_MODULE", !p.installable())
 				entries.AddStrings("LOCAL_OVERRIDES_PACKAGES", p.properties.Overrides...)
 			},
+		AddCustomEntries: func(name, prefix, moduleDir string, entries *android.AndroidMkEntries) {
+			entries.SetString("LOCAL_MODULE_PATH", filepath.Join("$(OUT_DIR)", p.installDir.RelPathString()))
+			entries.SetString("LOCAL_MODULE_STEM", p.installFilename)
+			entries.SetBoolIfTrue("LOCAL_UNINSTALLABLE_MODULE", !p.installable())
+			entries.AddStrings("LOCAL_OVERRIDES_PACKAGES", p.properties.Overrides...)
 		},
 	}
 }
