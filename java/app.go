@@ -35,6 +35,9 @@ func init() {
 	android.RegisterModuleType("android_test_helper_app", AndroidTestHelperAppFactory)
 	android.RegisterModuleType("android_app_certificate", AndroidAppCertificateFactory)
 	android.RegisterModuleType("override_android_app", OverrideAndroidAppModuleFactory)
+	android.RegisterModuleType("android_app_import", AndroidAppImportFactory)
+
+	initAndroidAppImportVariantGroupTypes()
 }
 
 // AndroidManifest.xml merging

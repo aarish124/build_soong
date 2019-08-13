@@ -1420,6 +1420,9 @@ func TestAndroidAppImport_ArchVariants(t *testing.T) {
 						},
 					},
 					presigned: true,
+
+					certificate: "PRESIGNED",
+
 					dex_preopt: {
 						enabled: true,
 					},
@@ -1439,6 +1442,9 @@ func TestAndroidAppImport_ArchVariants(t *testing.T) {
 						},
 					},
 					presigned: true,
+
+					certificate: "PRESIGNED",
+
 					dex_preopt: {
 						enabled: true,
 					},
