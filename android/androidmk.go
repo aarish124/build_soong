@@ -55,6 +55,195 @@ type AndroidMkData struct {
 
 type AndroidMkExtraFunc func(w io.Writer, outputFile Path)
 
+// Allows modules to customize their Android*.mk output.
+type AndroidMkEntriesProvider interface {
+	AndroidMkEntries() AndroidMkEntries
+	BaseModuleName() string
+}
+
+type AndroidMkEntries struct {
+	Class           string
+	SubName         string
+	DistFile        OptionalPath
+	OutputFile      OptionalPath
+	Disabled        bool
+	Include         string
+	Required        []string
+
+	header bytes.Buffer
+	footer bytes.Buffer
+
+	ExtraEntries []AndroidMkExtraEntriesFunc
+
+	EntryMap   map[string][]string
+	entryOrder []string
+}
+
+type AndroidMkExtraEntriesFunc func(entries *AndroidMkEntries)
+
+func (a *AndroidMkEntries) SetString(name, value string) {
+	if _, ok := a.EntryMap[name]; !ok {
+		a.entryOrder = append(a.entryOrder, name)
+	}
+	a.EntryMap[name] = []string{value}
+}
+
+func (a *AndroidMkEntries) SetBoolIfTrue(name string, flag bool) {
+	if flag {
+		if _, ok := a.EntryMap[name]; !ok {
+			a.entryOrder = append(a.entryOrder, name)
+		}
+		a.EntryMap[name] = []string{"true"}
+	}
+}
+
+func (a *AndroidMkEntries) AddStrings(name string, value ...string) {
+	if len(value) == 0 {
+		return
+	}
+	if _, ok := a.EntryMap[name]; !ok {
+		a.entryOrder = append(a.entryOrder, name)
+	}
+	a.EntryMap[name] = append(a.EntryMap[name], value...)
+}
+
+func (a *AndroidMkEntries) fillInEntries(config Config, bpPath string, mod blueprint.Module) {
+	a.EntryMap = make(map[string][]string)
+	amod := mod.(Module).base()
+	name := amod.BaseModuleName()
+
+	if a.Include == "" {
+		a.Include = "$(BUILD_PREBUILT)"
+	}
+	a.Required = append(a.Required, amod.commonProperties.Required...)
+
+	// Fill in the header part.
+	if len(amod.commonProperties.Dist.Targets) > 0 {
+		distFile := a.DistFile
+		if !distFile.Valid() {
+			distFile = a.OutputFile
+		}
+		if distFile.Valid() {
+			dest := filepath.Base(distFile.String())
+
+			if amod.commonProperties.Dist.Dest != nil {
+				var err error
+				if dest, err = validateSafePath(*amod.commonProperties.Dist.Dest); err != nil {
+					// This was checked in ModuleBase.GenerateBuildActions
+					panic(err)
+				}
+			}
+
+			if amod.commonProperties.Dist.Suffix != nil {
+				ext := filepath.Ext(dest)
+				suffix := *amod.commonProperties.Dist.Suffix
+				dest = strings.TrimSuffix(dest, ext) + suffix + ext
+			}
+
+			if amod.commonProperties.Dist.Dir != nil {
+				var err error
+				if dest, err = validateSafePath(*amod.commonProperties.Dist.Dir, dest); err != nil {
+					// This was checked in ModuleBase.GenerateBuildActions
+					panic(err)
+				}
+			}
+
+			goals := strings.Join(amod.commonProperties.Dist.Targets, " ")
+			fmt.Fprintln(&a.header, ".PHONY:", goals)
+			fmt.Fprintf(&a.header, "$(call dist-for-goals,%s,%s:%s)\n",
+				goals, distFile.String(), dest)
+		}
+	}
+
+	fmt.Fprintln(&a.header, "\ninclude $(CLEAR_VARS)")
+
+	// Collect make variable assignment entries.
+	a.SetString("LOCAL_PATH", filepath.Dir(bpPath))
+	a.SetString("LOCAL_MODULE", name+a.SubName)
+	a.SetString("LOCAL_MODULE_CLASS", a.Class)
+	a.SetString("LOCAL_PREBUILT_MODULE_FILE", a.OutputFile.String())
+	a.AddStrings("LOCAL_REQUIRED_MODULES", a.Required...)
+
+	archStr := amod.Arch().ArchType.String()
+	host := false
+	switch amod.Os().Class {
+	case Host:
+		// Make cannot identify LOCAL_MODULE_HOST_ARCH:= common.
+		if archStr != "common" {
+			a.SetString("LOCAL_MODULE_HOST_ARCH", archStr)
+		}
+		host = true
+	case HostCross:
+		// Make cannot identify LOCAL_MODULE_HOST_CROSS_ARCH:= common.
+		if archStr != "common" {
+			a.SetString("LOCAL_MODULE_HOST_CROSS_ARCH", archStr)
+		}
+		host = true
+	case Device:
+		// Make cannot identify LOCAL_MODULE_TARGET_ARCH:= common.
+		if archStr != "common" {
+			a.SetString("LOCAL_MODULE_TARGET_ARCH", archStr)
+		}
+
+		a.AddStrings("LOCAL_INIT_RC", amod.commonProperties.Init_rc...)
+		a.AddStrings("LOCAL_VINTF_FRAGMENTS", amod.commonProperties.Vintf_fragments...)
+		a.SetBoolIfTrue("LOCAL_PROPRIETARY_MODULE", Bool(amod.commonProperties.Proprietary))
+		if Bool(amod.commonProperties.Vendor) || Bool(amod.commonProperties.Soc_specific) {
+			a.SetString("LOCAL_VENDOR_MODULE", "true")
+		}
+		a.SetBoolIfTrue("LOCAL_ODM_MODULE", Bool(amod.commonProperties.Device_specific))
+		a.SetBoolIfTrue("LOCAL_PRODUCT_MODULE", Bool(amod.commonProperties.Product_specific))
+		a.SetBoolIfTrue("LOCAL_PRODUCT_SERVICES_MODULE", Bool(amod.commonProperties.Product_services_specific))
+		if amod.commonProperties.Owner != nil {
+			a.SetString("LOCAL_MODULE_OWNER", *amod.commonProperties.Owner)
+		}
+	}
+
+	if amod.noticeFile.Valid() {
+		a.SetString("LOCAL_NOTICE_FILE", amod.noticeFile.String())
+	}
+
+	if host {
+		makeOs := amod.Os().String()
+		if amod.Os() == Linux || amod.Os() == LinuxBionic {
+			makeOs = "linux"
+		}
+		a.SetString("LOCAL_MODULE_HOST_OS", makeOs)
+		a.SetString("LOCAL_IS_HOST_MODULE", "true")
+	}
+
+	prefix := ""
+	if amod.ArchSpecific() {
+		switch amod.Os().Class {
+		case Host:
+			prefix = "HOST_"
+		case HostCross:
+			prefix = "HOST_CROSS_"
+		case Device:
+			prefix = "TARGET_"
+
+		}
+
+		if amod.Arch().ArchType != config.Targets[amod.Os()][0].Arch.ArchType {
+			prefix = "2ND_" + prefix
+		}
+	}
+	for _, extra := range a.ExtraEntries {
+		extra(a)
+	}
+
+	// Write to footer.
+	fmt.Fprintln(&a.footer, "include "+a.Include)
+}
+
+func (a *AndroidMkEntries) write(w io.Writer) {
+	w.Write(a.header.Bytes())
+	for _, name := range a.entryOrder {
+		fmt.Fprintln(w, name+" := "+strings.Join(a.EntryMap[name], " "))
+	}
+	w.Write(a.footer.Bytes())
+}
+
 func AndroidMkSingleton() Singleton {
 	return &androidMkSingleton{}
 }

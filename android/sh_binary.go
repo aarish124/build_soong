@@ -132,6 +132,9 @@ func (s *ShBinary) AndroidMk() AndroidMkData {
 				fmt.Fprintln(w, "LOCAL_MODULE_RELATIVE_PATH :=", String(s.properties.Sub_dir))
 				fmt.Fprintln(w, "LOCAL_MODULE_SUFFIX :=")
 				fmt.Fprintln(w, "LOCAL_MODULE_STEM :=", s.outputFilePath.Rel())
+		ExtraEntries: []AndroidMkExtraEntriesFunc{
+			func(entries *AndroidMkEntries) {
+				s.customAndroidMkEntries(entries)
 			},
 		},
 	}
@@ -146,6 +149,42 @@ func (s *ShTest) AndroidMk() AndroidMkData {
 		fmt.Fprintln(w, "LOCAL_TEST_CONFIG :=", String(s.testProperties.Test_config))
 	})
 	return data
+
+func (s *ShBinary) customAndroidMkEntries(entries *AndroidMkEntries) {
+	entries.SetString("LOCAL_MODULE_RELATIVE_PATH", String(s.properties.Sub_dir))
+	entries.SetString("LOCAL_MODULE_SUFFIX", "")
+	entries.SetString("LOCAL_MODULE_STEM", s.outputFilePath.Rel())
+}
+
+func (s *ShTest) GenerateAndroidBuildActions(ctx ModuleContext) {
+	s.ShBinary.GenerateAndroidBuildActions(ctx)
+
+	s.data = PathsForModuleSrc(ctx, s.testProperties.Data)
+}
+
+func (s *ShTest) AndroidMkEntries() AndroidMkEntries {
+	return AndroidMkEntries{
+		Class:      "NATIVE_TESTS",
+		OutputFile: OptionalPathForPath(s.outputFilePath),
+		Include:    "$(BUILD_SYSTEM)/soong_cc_prebuilt.mk",
+		ExtraEntries: []AndroidMkExtraEntriesFunc{
+			func(entries *AndroidMkEntries) {
+				s.customAndroidMkEntries(entries)
+
+				entries.AddStrings("LOCAL_COMPATIBILITY_SUITE", s.testProperties.Test_suites...)
+				entries.SetString("LOCAL_TEST_CONFIG", String(s.testProperties.Test_config))
+				for _, d := range s.data {
+					rel := d.Rel()
+					path := d.String()
+					if !strings.HasSuffix(path, rel) {
+						panic(fmt.Errorf("path %q does not end with %q", path, rel))
+					}
+					path = strings.TrimSuffix(path, rel)
+					entries.AddStrings("LOCAL_TEST_DATA", path+":"+rel)
+				}
+			},
+		},
+	}
 }
 
 func InitShBinaryModule(s *ShBinary) {

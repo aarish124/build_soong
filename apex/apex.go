@@ -1436,6 +1436,12 @@ func (p *Prebuilt) AndroidMk() android.AndroidMkData {
 				fmt.Fprintln(w, "LOCAL_MODULE_PATH :=", filepath.Join("$(OUT_DIR)", p.installDir.RelPathString()))
 				fmt.Fprintln(w, "LOCAL_MODULE_STEM :=", p.installFilename)
 				fmt.Fprintln(w, "LOCAL_UNINSTALLABLE_MODULE :=", !p.installable())
+		ExtraEntries: []android.AndroidMkExtraEntriesFunc{
+			func(entries *android.AndroidMkEntries) {
+				entries.SetString("LOCAL_MODULE_PATH", filepath.Join("$(OUT_DIR)", p.installDir.RelPathString()))
+				entries.SetString("LOCAL_MODULE_STEM", p.installFilename)
+				entries.SetBoolIfTrue("LOCAL_UNINSTALLABLE_MODULE", !p.installable())
+				entries.AddStrings("LOCAL_OVERRIDES_PACKAGES", p.properties.Overrides...)
 			},
 		},
 	}

@@ -167,6 +167,28 @@ func (p *PrebuiltEtc) AndroidMk() AndroidMkData {
 				fmt.Fprintln(w, "")
 			}
 			fmt.Fprintln(w, "include $(BUILD_PREBUILT)")
+
+func (p *PrebuiltEtc) AndroidMkEntries() AndroidMkEntries {
+	nameSuffix := ""
+	if p.inRecovery() && !p.onlyInRecovery() {
+		nameSuffix = ".recovery"
+	}
+	return AndroidMkEntries{
+		Class:      "ETC",
+		SubName:    nameSuffix,
+		OutputFile: OptionalPathForPath(p.outputFilePath),
+		ExtraEntries: []AndroidMkExtraEntriesFunc{
+			func(entries *AndroidMkEntries) {
+				entries.SetString("LOCAL_MODULE_TAGS", "optional")
+				entries.SetString("LOCAL_MODULE_PATH", "$(OUT_DIR)/"+p.installDirPath.RelPathString())
+				entries.SetString("LOCAL_INSTALLED_MODULE_STEM", p.outputFilePath.Base())
+				entries.SetString("LOCAL_UNINSTALLABLE_MODULE", strconv.FormatBool(!p.Installable()))
+				if p.additionalDependencies != nil {
+					for _, path := range *p.additionalDependencies {
+						entries.SetString("LOCAL_ADDITIONAL_DEPENDENCIES", path.String())
+					}
+				}
+			},
 		},
 	}
 }
