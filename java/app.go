@@ -114,6 +114,10 @@ type AndroidApp struct {
 	// the install APK name is normally the same as the module name, but can be overridden with PRODUCT_PACKAGE_NAME_OVERRIDES.
 	installApkName string
 
+	installDir android.OutputPath
+
+	onDeviceDir string
+
 	additionalAaptFlags []string
 }
 
@@ -406,6 +410,7 @@ func (a *AndroidApp) generateAndroidBuildActions(ctx android.ModuleContext) {
 	} else {
 		installDir = android.PathForModuleInstall(ctx, "app", a.installApkName)
 	}
+	a.onDeviceDir = android.InstallPathToOnDevicePath(ctx, a.installDir)
 
 	a.aapt.noticeFile = a.noticeBuildActions(ctx, installDir)
 
